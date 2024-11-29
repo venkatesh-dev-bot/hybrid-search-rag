@@ -27,15 +27,17 @@ def initialize_rag():
     rag.create_vectorstore()
     return rag
 
-# Streaming handler for smooth response display
+# Enhanced StreamHandler for better response display
 class StreamHandler(BaseCallbackHandler):
-    def __init__(self, container):
+    def __init__(self, container, initial_text=""):
         self.container = container
-        self.text = ""
+        self.text = initial_text
+        self.full_response = ""
         
     def on_llm_new_token(self, token: str, **kwargs):
-        self.text += token
-        self.container.markdown(self.text)
+        self.full_response += token
+        # Update the container with the new token
+        self.container.markdown(self.full_response)
 
 # Initialize session state
 if 'messages' not in st.session_state:
@@ -91,39 +93,56 @@ if question:
         st.markdown(question)
     st.session_state.messages.append({"role": "user", "content": question})
     
-    # Show assistant response
+    # Show assistant response with streaming
     with st.chat_message("assistant"):
-        response_container = st.empty()
+        # Create placeholder for the response
+        response_placeholder = st.empty()
+        
         try:
+            # Initialize the stream handler
+            stream_handler = StreamHandler(response_placeholder)
+            
+            # Show thinking message
+            with response_placeholder:
+                st.write("🤔 Thinking...")
+            
+            # Update the chat model to enable streaming
+            rag.chat_model.streaming = True
+            rag.chat_model.callbacks = [stream_handler]
+            
             # Get response from RAG system
             result = rag.query(question)
             
-            # Format response with markdown
-            response = f"""
-            {result['answer']}
+            # Format full response with markdown and sources
+            full_response = f"""
+            {stream_handler.full_response}
             
-            ---
-            **Sources:**
+            Sources:
             """
             for source in result['sources']:
-                response += f"\n- {source}"
+                full_response += f"\n- {source}"
             
-            # Display response
-            response_container.markdown(response)
+            # Update the placeholder with the complete response
+            response_placeholder.markdown(full_response)
             
             # Store in chat history
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": response
+                "content": full_response
             })
             
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
-            response_container.error(error_msg)
+            response_placeholder.error(error_msg)
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": error_msg
             })
+        
+        finally:
+            # Reset streaming configuration
+            rag.chat_model.streaming = False
+            rag.chat_model.callbacks = []
 
 # Add custom CSS
 st.markdown("""
