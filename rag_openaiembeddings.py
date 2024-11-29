@@ -29,7 +29,8 @@ class ImprovedRAGSystem:
         self.chat_model = ChatOpenAI(
             model="gpt-4o-mini",  # Using the latest GPT-4 model
             temperature=0,
-            openai_api_key=self.openai_api_key
+            openai_api_key=self.openai_api_key,
+            streaming=False  # Will be toggled when needed
         )
         self.vectorstore = None
         self.documents = []
@@ -227,8 +228,7 @@ class ImprovedRAGSystem:
         return [item['doc'] for item in sorted_results[:top_k]]
 
     def create_qa_chain(self, retrieved_docs: List[Document]) -> RetrievalQA:
-        """Create a QA chain with the retrieved documents."""
-        # Create a new retriever from the retrieved documents
+        """Create a QA chain with streaming support."""
         retriever = FAISS.from_documents(
             retrieved_docs, 
             self.embedding_model
@@ -237,10 +237,9 @@ class ImprovedRAGSystem:
             search_kwargs={"k": 5}
         )
 
-        # Create the QA chain
         qa_chain = RetrievalQA.from_chain_type(
             llm=self.chat_model,
-            chain_type="stuff",  # This combines all documents into one context
+            chain_type="stuff",
             retriever=retriever,
             return_source_documents=True,
             chain_type_kwargs={
@@ -252,9 +251,8 @@ class ImprovedRAGSystem:
         return qa_chain
 
     def query(self, query: str) -> Dict:
-        """Process a query and return the answer with sources."""
+        """Process a query with streaming support."""
         try:
-            # Get relevant documents using hybrid search
             retrieved_docs = self.hybrid_search(query)
             
             if not retrieved_docs:
@@ -263,14 +261,11 @@ class ImprovedRAGSystem:
                     "sources": []
                 }
 
-            # Create enhanced context with metadata
+            # Create context
             context_parts = []
             for doc in retrieved_docs:
-                # Add document metadata
                 context_parts.append(f"\nSource: {doc.metadata.get('title', 'Unknown')}")
-                # Add content
                 context_parts.append(doc.page_content)
-                # Add diagrams if available
                 if doc.metadata.get('diagrams'):
                     context_parts.append("\nRelevant diagrams:")
                     context_parts.extend(doc.metadata['diagrams'])
@@ -278,10 +273,8 @@ class ImprovedRAGSystem:
 
             context = "\n".join(context_parts)
 
-            # Create QA chain with retrieved documents
+            # Create and run QA chain
             qa_chain = self.create_qa_chain(retrieved_docs)
-            
-            # Get response
             result = qa_chain({"query": query, "context": context})
             
             # Extract answer and sources
@@ -294,11 +287,7 @@ class ImprovedRAGSystem:
             }
             
         except Exception as e:
-            print(f"Error processing query: {str(e)}")
-            return {
-                "answer": f"An error occurred while processing your query: {str(e)}",
-                "sources": []
-            }
+            raise Exception(f"Error in query processing: {str(e)}")
 
 # Usage
 if __name__ == "__main__":
